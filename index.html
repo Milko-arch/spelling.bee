@@ -69,7 +69,8 @@
             return {
                 playApplause: () => {
                     if (!applauseAudio) {
-                        applauseAudio = new Audio('https://bigsoundbank.com/UPLOAD/mp3/0112.mp3');
+                        // Replaced audio with a clean applause sound
+                        applauseAudio = new Audio('https://www.soundjay.com/human/sounds/applause-2.mp3');
                         applauseAudio.volume = 0.7;
                     }
                     if (applauseAudio) {
@@ -294,6 +295,17 @@
             const [students, setStudents] = useState(initialStudents);
             const [currentStudentIndex, setCurrentStudentIndex] = useState(0);
             const spinSoundRef = useRef(null);
+            const [isNextSpinQueued, setIsNextSpinQueued] = useState(false);
+
+            const speak = useCallback((text) => {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                const systemVoice = window.speechSynthesis.getVoices().find(v => v.name === voice.uri);
+                if (systemVoice) utterance.voice = systemVoice;
+                utterance.rate = voice.rate;
+                utterance.pitch = voice.pitch;
+                window.speechSynthesis.speak(utterance);
+            }, [voice]);
 
             const drawRoulette = useCallback(() => {
                 const canvas = canvasRef.current;
@@ -333,37 +345,7 @@
                 });
             }, [rouletteWords]);
 
-            useEffect(() => {
-                const canvas = canvasRef.current;
-                if (!canvas) return;
-                const resizeCanvas = () => {
-                    canvas.width = canvas.clientWidth;
-                    canvas.height = canvas.clientHeight;
-                    drawRoulette();
-                };
-                
-                const observer = new ResizeObserver(resizeCanvas);
-                observer.observe(canvas.parentElement);
-
-                resizeCanvas();
-                
-                spinSoundRef.current = new Audio('https://bigsoundbank.com/UPLOAD/mp3/0038.mp3');
-                spinSoundRef.current.volume = 0.5;
-                
-                return () => observer.disconnect();
-            }, [drawRoulette]);
-
-            const speak = (text) => {
-                window.speechSynthesis.cancel();
-                const utterance = new SpeechSynthesisUtterance(text);
-                const systemVoice = window.speechSynthesis.getVoices().find(v => v.name === voice.uri);
-                if (systemVoice) utterance.voice = systemVoice;
-                utterance.rate = voice.rate;
-                utterance.pitch = voice.pitch;
-                window.speechSynthesis.speak(utterance);
-            };
-
-            const spin = () => {
+            const spin = useCallback(() => {
                 if (spinning || rouletteWords.length === 0) return;
                 setSpinning(true);
                 const spinDuration = 8000;
@@ -375,10 +357,9 @@
                 const segmentAngleDegrees = 360 / segmentCount;
                 
                 const winningAngle = winningSegmentIndex * segmentAngleDegrees;
-                const randomOffset = (Math.random() - 0.5) * segmentAngleDegrees * 0.8;
-
+                
                 const fullSpins = (Math.floor(Math.random() * 5) + 8) * 360;
-                const targetAngle = fullSpins - winningAngle - randomOffset;
+                const targetAngle = fullSpins - winningAngle;
 
                 const canvas = canvasRef.current;
                 if (canvas) {
@@ -408,11 +389,68 @@
                         spinSoundRef.current.pause();
                     }
                 }, spinDuration);
-            };
+            }, [spinning, rouletteWords, initialWords, speak]);
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const resizeCanvas = () => {
+                    canvas.width = canvas.clientWidth;
+                    canvas.height = canvas.clientHeight;
+                    drawRoulette();
+                };
+                
+                const observer = new ResizeObserver(resizeCanvas);
+                observer.observe(canvas.parentElement);
+
+                resizeCanvas();
+                
+                spinSoundRef.current = new Audio('https://bigsoundbank.com/UPLOAD/mp3/0038.mp3');
+                spinSoundRef.current.volume = 0.5;
+                
+                return () => observer.disconnect();
+            }, [drawRoulette]);
+
+            useEffect(() => {
+                if (isNextSpinQueued) {
+                    const timer = setTimeout(() => {
+                        if (rouletteWords.length > 1) {
+                            spin();
+                        }
+                        setIsNextSpinQueued(false);
+                    }, 500);
+                    return () => clearTimeout(timer);
+                }
+            }, [isNextSpinQueued, spin, rouletteWords.length]);
+
+            useEffect(() => {
+                if (rouletteWords.length === 1) {
+                    speak(rouletteWords[0].text);
+                }
+            }, [rouletteWords, speak]);
             
             const nextStudent = () => { if (students.length > 0) { setCurrentStudentIndex((prev) => (prev + 1) % students.length); } };
-            const handleRemoveWordAndSpin = () => { if (currentWord) { setRouletteWords(prev => prev.filter(w => w.text !== currentWord.text)); } setShowResult(false); nextStudent(); setTimeout(spin, 500); };
-            const handleSpinAgain = () => { setShowResult(false); nextStudent(); setTimeout(spin, 500); };
+            
+            const handleRemoveWordAndSpin = () => {
+                setShowResult(false);
+                if (currentWord) {
+                    const nextWords = rouletteWords.filter(w => w.text !== currentWord.text);
+                    setRouletteWords(nextWords);
+                    if (nextWords.length > 1) {
+                        nextStudent();
+                        setIsNextSpinQueued(true);
+                    }
+                }
+            };
+
+            const handleSpinAgain = () => { 
+                setShowResult(false); 
+                nextStudent(); 
+                if (rouletteWords.length > 1) {
+                    setIsNextSpinQueued(true);
+                }
+            };
+            
             const handleSpellIt = () => { if (resultWord) setIsSpellingBeeOpen(true); };
             const handleSpellingSuccess = () => { setIsSpellingBeeOpen(false); handleRemoveWordAndSpin(); };
             const removeStudent = (indexToRemove) => { setStudents(prev => prev.filter((_, index) => index !== indexToRemove)); if (currentStudentIndex >= indexToRemove) { setCurrentStudentIndex(prev => Math.max(0, prev - 1)); } };
@@ -440,7 +478,7 @@
                         
                         {logoSrc && <img src={logoSrc} alt="Logo" className="h-20 w-auto object-contain mb-4 shrink-0" />}
                         
-                        {rouletteWords.length > 0 ? (
+                        {rouletteWords.length > 1 ? (
                             <div className="relative flex items-center justify-center w-full flex-1 min-h-0">
                                 <div className="relative w-full h-full max-w-[90vmin] max-h-[90vmin] aspect-square">
                                     <div style={{top: '50%', right: '0px', transform: 'translateY(-50%) rotate(180deg)'}} className="absolute w-0 h-0 border-t-[15px] border-t-transparent border-b-[15px] border-b-transparent border-l-[30px] border-l-yellow-400 z-20"></div>
@@ -450,7 +488,29 @@
                             </div>
                         ) : (
                              <div className="flex-1 flex items-center justify-center">
-                                <div className="text-center"><h2 className={`text-4xl font-bold ${textColor}`}>Game Over</h2><button onClick={onClose} className="mt-4 px-6 py-3 bg-green-500 text-white font-bold rounded-lg shadow-lg">Close</button></div>
+                                <div className="text-center">
+                                    {rouletteWords.length === 1 ? (
+                                        <>
+                                            <h2 className={`text-4xl font-bold mb-4 ${textColor}`}>Last Word</h2>
+                                            <p className={`text-6xl md:text-8xl font-extrabold break-words mb-8 ${textColor}`}>{rouletteWords[0].text}</p>
+                                            <div className="flex flex-wrap justify-center gap-3">
+                                                <button onClick={() => {
+                                                    const lastWord = rouletteWords[0];
+                                                    const originalLastWord = initialWords.find(w => w.text.toUpperCase() === lastWord.text);
+                                                    setCurrentWord(lastWord);
+                                                    setResultWord(originalLastWord || lastWord);
+                                                    setIsSpellingBeeOpen(true);
+                                                }} className="px-6 py-3 bg-yellow-500 text-white font-bold rounded-lg">Spell It!</button>
+                                                <button onClick={onClose} className="px-6 py-3 bg-slate-500 text-white font-bold rounded-lg">End Game</button>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <h2 className={`text-4xl font-bold ${textColor}`}>Game Over</h2>
+                                            <button onClick={onClose} className="mt-4 px-6 py-3 bg-green-500 text-white font-bold rounded-lg shadow-lg">Close</button>
+                                        </>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </main>
@@ -498,7 +558,7 @@
             const [inputText, setInputText] = useState('');
             const [studentsText, setStudentsText] = useState('');
             const [students, setStudents] = useState([]);
-            const [rate, setRate] = useState(1);
+            const [rate, setRate] = useState(0.8);
             const [pitch, setPitch] = useState(1);
             const [isRouletteOpen, setIsRouletteOpen] = useState(false);
             const [logoSrc, setLogoSrc] = useState('https://i.imgur.com/v12y02s.png');
@@ -516,8 +576,13 @@
                     const voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith('en-'));
                     setSystemVoices(voices);
                     if (voices.length > 0 && !selectedVoiceURI) {
-                        const defaultVoice = voices.find(v => v.name.includes('Google') || v.default) || voices[0];
-                        setSelectedVoiceURI(defaultVoice.name);
+                        const googleUSEnglish = voices.find(v => v.name === 'Google US English');
+                        const googleVoice = voices.find(v => v.name.includes('Google'));
+                        const defaultBrowserVoice = voices.find(v => v.default);
+                        const finalVoice = googleUSEnglish || googleVoice || defaultBrowserVoice || voices[0];
+                        if (finalVoice) {
+                           setSelectedVoiceURI(finalVoice.name);
+                        }
                     }
                 };
                 
